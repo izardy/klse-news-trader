@@ -46,19 +46,19 @@ def get_all_stocks():
 
         # Get latest score from recommendations table
         score_row = conn.execute(
-            "SELECT score, signal, date FROM recommendations WHERE symbol = ? ORDER BY date DESC LIMIT 1",
+            "SELECT action, confidence, date FROM recommendations WHERE symbol = ? ORDER BY date DESC LIMIT 1",
             (symbol,)
         ).fetchone()
 
         # Get news count
         news_count = conn.execute(
-            "SELECT COUNT(*) as cnt FROM news WHERE symbol = ?",
+            "SELECT COUNT(*) as cnt FROM news WHERE matched_symbol = ?",
             (symbol,)
         ).fetchone()
 
         # Get latest news headline
         latest_news = conn.execute(
-            "SELECT title, url, date FROM news WHERE symbol = ? ORDER BY date DESC LIMIT 1",
+            "SELECT title, url, published_at FROM news WHERE matched_symbol = ? ORDER BY published_at DESC LIMIT 1",
             (symbol,)
         ).fetchall()
         latest_news_row = latest_news[0] if latest_news else None
@@ -74,8 +74,8 @@ def get_all_stocks():
             "symbol": symbol,
             "last_price": price_row["close"] if price_row else None,
             "price_updated": price_row["date"] if price_row else None,
-            "score": int(score_row["score"]) if score_row and score_row["score"] is not None else None,
-            "signal": score_row["signal"] if score_row else "N/A",
+            "score": int(score_row["confidence"] * 10) if score_row and score_row["confidence"] else None,
+            "signal": score_row["action"] if score_row else "N/A",
             "score_updated": score_row["date"] if score_row else None,
             "news_count": news_count["cnt"] if news_count else 0,
             "latest_headline": latest_news_row["title"] if latest_news_row else None,
@@ -110,12 +110,12 @@ def stock_detail(symbol):
     ).fetchall()
 
     news_items = conn.execute(
-        "SELECT title, url, source, date FROM news WHERE symbol = ? ORDER BY date DESC LIMIT 20",
+        "SELECT title, url, source, published_at FROM news WHERE matched_symbol = ? ORDER BY published_at DESC LIMIT 20",
         (symbol,)
     ).fetchall()
 
     score_row = conn.execute(
-        "SELECT score, signal, reason, date FROM recommendations WHERE symbol = ? ORDER BY date DESC LIMIT 1",
+        "SELECT action, confidence, reason, date FROM recommendations WHERE symbol = ? ORDER BY date DESC LIMIT 1",
         (symbol,)
     ).fetchone()
     conn.close()
@@ -150,7 +150,7 @@ def api_analyze(symbol):
     ).fetchall()
 
     news_count = conn.execute(
-        "SELECT COUNT(*) as cnt FROM news WHERE symbol = ?",
+        "SELECT COUNT(*) as cnt FROM news WHERE matched_symbol = ?",
         (symbol,)
     ).fetchone()
     conn.close()
