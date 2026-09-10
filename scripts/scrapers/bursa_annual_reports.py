@@ -1,11 +1,10 @@
-"""Full paginated annual-report extraction from Bursa Malaysia.
-Workflow:
- 1. Category=Annual Report (no company filter -> ALL companies), click Search
- 2. For each page: each Title link opens a detail page
- 3. Detail content (incl. Attachments) lives in disclosure.bursamalaysia.com iframe
- 4. Attachment download links (apbursaweb/download) fetch 200 ONLY via in-page fetch
-    (external request=403). So we navigate the page to viewHtml (sets cookies) then fetch.
- 5. Next page, repeat; stop when no more pages.
+"""Optimized annual-report PDF extraction — navigates directly to disclosure viewHtml.
+Instead of opening the Bursa detail page (outer page + iframe), we go straight to:
+  https://disclosure.bursamalaysia.com/FileAccess/viewHtml?e={ann_id}
+which is where the actual content + Attachments live. Much faster.
+
+Phase 1: Use Playwright to enumerate ann_id links from the results pages (with pagination).
+Phase 2: For each ann_id, navigate directly to viewHtml, extract attachments, fetch PDFs.
 """
 import asyncio, json, sys, os, urllib.parse, re, base64
 from playwright.async_api import async_playwright
@@ -45,114 +44,119 @@ async def pass_turnstile(page):
     return False
 
 
-async def extract_from_frame(pg, ann_id):
-    """Find the disclosure iframe, pull title + attachment download links."""
-    iframe = None
-    for i in range(10):
-        for f in pg.frames:
-            if "disclosure.bursamalaysia.com" in f.url and "FileAccess" in f.url:
-                iframe = f
-                break
-        if iframe:
+async def extract_ann_ids(page, max_pages):
+    """Enumerate all ann_id links from the results pages (with DataTables pagination)."""
+    all_ids = []
+    page_no = 1
+    while True:
+        if max_pages and page_no > max_pages:
+            print(f"[enum] MAX_PAGES={max_pages} reached", flush=True)
             break
-        await asyncio.sleep(1.5)
-    if not iframe:
-        return {"title": "", "company": "", "ann_id": ann_id, "pdfs": []}
-    await asyncio.sleep(2)
-    info = await iframe.evaluate("""()=>{
-        const title=(document.querySelector('h1,h2,[class*=title],td')?.innerText||'').trim().slice(0,150);
-        const comp=(document.body.innerText.match(/[A-Z][A-Z ]+(?:BERHAD|GROUP|HOLDINGS)/)?.[0]||'').trim();
-        const links=Array.from(document.querySelectorAll('a')).map(a=>({
-            text:(a.innerText||a.getAttribute('title')||'').trim(),
-            href:a.getAttribute('href')||''
-        })).filter(x=>x.href&&(/download|FileAccess|EA_DS_ATTACH/.test(x.href)||/\\.pdf($|\\?)/i.test(x.href)));
-        return JSON.stringify({title,comp,links});
-    }""")
-    r = json.loads(info)
-    pdfs = []
-    for l in r["links"]:
-        href = l["href"]
-        if href.startswith("/"):
-            href = DISC + href
-        elif not href.startswith("http"):
-            href = DISC + "/" + href
-        pdfs.append({"name": l["text"], "href": href})
-    seen = set(); dedup = []
-    for p in pdfs:
-        if p["href"] not in seen:
-            seen.add(p["href"]); dedup.append(p)
-    print(f"   iframe: title='{r['title'][:40]}' comp='{r['comp'][:25]}' pdfs={len(dedup)}", flush=True)
-    return {"title": r["title"], "company": r["comp"], "ann_id": ann_id, "pdfs": dedup}
-
-
-async def scrape_detail(page, url):
-    """Open a detail link in a new tab, read iframe content."""
-    ann_id = urllib.parse.parse_qs(urllib.parse.urlparse(url).query).get("ann_id", [""])[0]
-    try:
-        async with context.expect_page(timeout=8000) as np_info:
-            try:
-                await page.evaluate(f"window.open('{url}','_blank')")
-            except Exception:
-                await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-        pg = await np_info.value
-        await pg.wait_for_load_state("domcontentloaded")
-        for i in range(10):
-            await asyncio.sleep(1.5)
-            if "Just a moment" not in await pg.title():
+        # wait for rows
+        rj = None
+        for i in range(15):
+            await asyncio.sleep(2)
+            rj = json.loads(await page.evaluate("""()=>{
+                const tbl=document.querySelector('#table-announcements');
+                return JSON.stringify({
+                    rows:tbl?tbl.querySelectorAll('tbody tr').length:0,
+                    noRes:document.body.innerText.includes('No results')||document.body.innerText.includes('0 results'),
+                    titleLinks:Array.from(tbl?tbl.querySelectorAll('a[href*="ann_id="]')||[]:[]).map(a=>a.href),
+                    pageInfo:(document.body.innerText.match(/Showing[\\s\\S]{0,40}/)||[''])[0]
+                });
+            }"""))
+            if rj["rows"] > 0 or rj["noRes"]:
                 break
-        await asyncio.sleep(4)
-        return await extract_from_frame(pg, ann_id), pg
-    except Exception:
-        try:
-            await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            for i in range(10):
-                await asyncio.sleep(1.5)
-                if "Just a moment" not in await page.title():
-                    break
-            await asyncio.sleep(4)
-            return await extract_from_frame(page, ann_id), page
-        except Exception as e2:
-            return {"title": "", "company": "", "ann_id": ann_id, "pdfs": [], "error": str(e2)[:100]}, page
+        if not rj or (rj["noRes"] and rj["rows"] == 0):
+            print(f"[enum] no results p{page_no}", flush=True)
+            break
+        links = rj["titleLinks"]
+        ids = []
+        for u in links:
+            aid = urllib.parse.parse_qs(urllib.parse.urlparse(u).query).get("ann_id", [""])[0]
+            if aid:
+                ids.append(aid)
+        all_ids.extend(ids)
+        print(f"[enum] PAGE {page_no}: {len(ids)} ids | {rj['pageInfo']} | total={len(all_ids)}", flush=True)
+        if not ids:
+            break
+        # next page
+        has_next = await page.evaluate("()=>{const n=document.querySelector('#table-announcements_next');return !!(n&&!n.className.includes('disabled'));}")
+        if not has_next:
+            break
+        await page.evaluate("()=>{const a=document.querySelector('#table-announcements_next a');if(a)a.click();}")
+        page_no += 1
+        await asyncio.sleep(2)
+    return all_ids
 
 
-async def download_pdfs(pg, ann_id, pdfs):
-    """Load disclosure viewHtml (sets cookies) then fetch() each PDF in-page."""
-    if "disclosure.bursamalaysia.com" not in pg.url:
+async def download_pdfs_for_ann(ann_ids):
+    """For each ann_id, navigate directly to viewHtml, extract attachments, fetch PDFs."""
+    global context
+    pg = await context.new_page()
+    count = 0
+    for idx, ann_id in enumerate(ann_ids):
+        if MAX_ROWS and idx >= MAX_ROWS:
+            print(f"[dl] MAX_ROWS={MAX_ROWS} reached", flush=True)
+            break
+        # Navigate directly to the disclosure content page
+        url = f"{DISC}/FileAccess/viewHtml?e={ann_id}"
         try:
-            await pg.goto(f"{DISC}/FileAccess/viewHtml?e={ann_id}", timeout=30000, wait_until="domcontentloaded")
+            await pg.goto(url, timeout=30000, wait_until="domcontentloaded")
             for i in range(8):
                 await asyncio.sleep(1.5)
                 if "Just a moment" not in await pg.title():
                     break
-        except Exception:
-            pass
-    await asyncio.sleep(2)
-    comp = ""
-    for pdoc in pdfs:
-        fname = safe_name((comp.replace(" ", "") + "_" if comp else "") + pdoc["name"], ann_id)
-        path = os.path.join(OUT, fname)
-        if os.path.exists(path):
-            print(f"   exists {fname}", flush=True)
-            continue
-        escaped = pdoc["href"].replace("\\", "\\\\").replace("'", "\\'")
-        fetch_js = ("async ()=>{"
-                    f" const r=await fetch('{escaped}');"
-                    " if(!r.ok) return 'STATUS:'+r.status;"
-                    " const buf=await r.arrayBuffer(); const bytes=new Uint8Array(buf);"
-                    " let bin=''; const CH=0x8000;"
-                    " for(let i=0;i<bytes.length;i+=CH){ bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+CH)); }"
-                    " return btoa(bin); }")
-        try:
-            b64 = await pg.evaluate(fetch_js)
-            if isinstance(b64, str) and b64.startswith("STATUS:"):
-                print(f"   DL fail {b64[7:]} {pdoc['href'][:60]}", flush=True)
-                continue
-            data = base64.b64decode(b64)
-            with open(path, "wb") as f:
-                f.write(data)
-            print(f"   DOWNLOADED {fname} ({len(data)} bytes)", flush=True)
+            await asyncio.sleep(2)
+            # Extract attachment links + metadata
+            info = await pg.evaluate("""()=>{
+                const title=(document.querySelector('h1,h2,[class*=title],td')?.innerText||'').trim().slice(0,150);
+                const comp=(document.body.innerText.match(/[A-Z][A-Z ]+(?:BERHAD|GROUP|HOLDINGS)/)?.[0]||'').trim();
+                const links=Array.from(document.querySelectorAll('a')).map(a=>({
+                    text:(a.innerText||a.getAttribute('title')||'').trim(),
+                    href:a.getAttribute('href')||''
+                })).filter(x=>x.href&&(/download|FileAccess|EA_DS_ATTACH/.test(x.href)||/\\.pdf($|\\?)/i.test(x.href)));
+                return JSON.stringify({title,comp,links});
+            }""")
+            r = json.loads(info)
+            pdfs = []
+            for l in r["links"]:
+                href = l["href"]
+                if href.startswith("/"):
+                    href = DISC + href
+                elif not href.startswith("http"):
+                    href = DISC + "/" + href
+                pdfs.append({"name": l["text"], "href": href})
+            if pdfs:
+                print(f"[dl] {idx+1}/{len(ann_ids)} ann={ann_id} comp='{r['comp'][:25]}' pdfs={len(pdfs)}", flush=True)
+            for pdoc in pdfs:
+                fname = safe_name((r["comp"].replace(" ", "") + "_" if r["comp"] else "") + pdoc["name"], ann_id)
+                path = os.path.join(OUT, fname)
+                if os.path.exists(path):
+                    continue
+                escaped = pdoc["href"].replace("\\", "\\\\").replace("'", "\\'")
+                fetch_js = ("async ()=>{"
+                            f" const r=await fetch('{escaped}');"
+                            " if(!r.ok) return 'STATUS:'+r.status;"
+                            " const buf=await r.arrayBuffer(); const bytes=new Uint8Array(buf);"
+                            " let bin=''; const CH=0x8000;"
+                            " for(let i=0;i<bytes.length;i+=CH){ bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+CH)); }"
+                            " return btoa(bin); }")
+                try:
+                    b64 = await pg.evaluate(fetch_js)
+                    if isinstance(b64, str) and b64.startswith("STATUS:"):
+                        continue
+                    data = base64.b64decode(b64)
+                    with open(path, "wb") as f:
+                        f.write(data)
+                    count += 1
+                    print(f"   DL {fname} ({len(data)} bytes)", flush=True)
+                except Exception as e:
+                    print(f"   DL err {str(e)[:80]}", flush=True)
         except Exception as e:
-            print(f"   DL err {str(e)[:100]}", flush=True)
+            print(f"[dl] err ann={ann_id}: {str(e)[:80]}", flush=True)
+    await pg.close()
+    return count
 
 
 async def main():
@@ -164,13 +168,13 @@ async def main():
         context = await browser.new_context(viewport={"width":1400,"height":950},
             user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
         await context.add_init_script("Object.defineProperty(navigator,'webdriver',{get:()=>undefined})")
+
+        # Phase 1: enumerate ann_ids from results pages
         page = await context.new_page()
         await page.goto("https://www.bursamalaysia.com/market_information/announcements/company_announcement",
                         timeout=45000, wait_until="domcontentloaded")
         if not await pass_turnstile(page):
-            print(f"[{SYMBOL}] BLOCKED by Turnstile", flush=True)
-            await browser.close(); return
-        print(f"[{SYMBOL}] passed", flush=True)
+            print(f"[{SYMBOL}] BLOCKED", flush=True); await browser.close(); return
         await asyncio.sleep(3)
         if CODE:
             await page.evaluate("""(code)=>{const s=document.querySelector('#inCompany');s.value=code;s.dispatchEvent(new Event('change',{bubbles:true}));if(window.jQuery)jQuery(s).trigger('change');}""", CODE)
@@ -178,71 +182,21 @@ async def main():
         await page.evaluate("""()=>{const s=document.querySelector('#inMarket');s.value='AR,ARCO';s.dispatchEvent(new Event('change',{bubbles:true}));if(window.jQuery)jQuery(s).trigger('change');}""")
         await asyncio.sleep(2)
         await page.evaluate("""()=>{
-            const inC=document.querySelector('#inCompany');
-            const form=inC?.closest('form')||document;
-            const btns=Array.from(form.querySelectorAll('button,input[type=submit],[class*=btn]'));
-            const sb=btns.find(x=>x.innerText&&x.innerText.trim().toLowerCase()==='search');
+            const form=document.querySelector('#inCompany')?.closest('form')||document;
+            const sb=Array.from(form.querySelectorAll('button')).find(x=>x.innerText&&x.innerText.trim().toLowerCase()==='search');
             if(sb)sb.click();
         }""")
-        print(f"[{SYMBOL}] Search clicked", flush=True)
+        print(f"[{SYMBOL}] Search clicked — enumerating ann_ids...", flush=True)
+        ann_ids = await extract_ann_ids(page, MAX_PAGES)
+        await page.close()
+        print(f"[{SYMBOL}] Total ann_ids: {len(ann_ids)}", flush=True)
 
-        all_results = []
-        page_no = 1
-        while True:
-            if MAX_PAGES and page_no > MAX_PAGES:
-                print(f"[{SYMBOL}] MAX_PAGES reached", flush=True); break
-            rj = None
-            for i in range(15):
-                await asyncio.sleep(2)
-                rj = json.loads(await page.evaluate("""()=>{
-                    const tbl=document.querySelectorAll('table')[1];
-                    return JSON.stringify({
-                        rows:tbl?tbl.querySelectorAll('tbody tr').length:0,
-                        noRes:document.body.innerText.includes('No results')||document.body.innerText.includes('0 results'),
-                        titleLinks:Array.from(tbl?tbl.querySelectorAll('a[href*="ann_id="]')||[]:[]).map(a=>a.href),
-                        pageInfo:(document.body.innerText.match(/Showing[\\s\\S]{0,40}/)||[''])[0]
-                    });
-                }"""))
-                if rj["rows"] > 0 or rj["noRes"]:
-                    break
-            if not rj or (rj["noRes"] and rj["rows"] == 0):
-                print(f"[{SYMBOL}] no results p{page_no}", flush=True); break
-            tl = rj["titleLinks"]
-            print(f"[{SYMBOL}] PAGE {page_no}: {len(tl)} links | {rj['pageInfo']}", flush=True)
-            if not tl:
-                break
-            for j, u in enumerate(tl):
-                if MAX_ROWS and len(all_results) >= MAX_ROWS:
-                    print(f"[{SYMBOL}] MAX_ROWS reached", flush=True); break
-                print(f"[{SYMBOL}] p{page_no} r{j+1}/{len(tl)}", flush=True)
-                d, pg = await scrape_detail(page, u)
-                if d.get("pdfs"):
-                    await download_pdfs(pg, d["ann_id"], d["pdfs"])
-                all_results.append(d)
-                try:
-                    await pg.close()
-                except Exception:
-                    pass
-            if MAX_ROWS and len(all_results) >= MAX_ROWS:
-                break
-            has_next = await page.evaluate("""()=>{
-                const pg=document.querySelector('.pagination,.dataTables_paginate,[class*=pagination]');
-                if(!pg) return false;
-                return [...pg.querySelectorAll('a,button')].some(x=>/next|›|»/.test((x.innerText||'')+(x.className||''))&&!x.className.includes('disabled'));
-            }""")
-            if not has_next:
-                print(f"[{SYMBOL}] no next page p{page_no}", flush=True); break
-            await page.evaluate("""()=>{
-                const pg=document.querySelector('.pagination,.dataTables_paginate,[class*=pagination]');
-                const next=[...pg.querySelectorAll('a,button')].find(x=>/next|›|»/.test((x.innerText||'')+(x.className||''))&&!x.className.includes('disabled'));
-                if(next)next.click();
-            }""")
-            page_no += 1
-            await asyncio.sleep(3)
+        if not ann_ids:
+            print(f"[{SYMBOL}] no ann_ids found", flush=True); await browser.close(); return
 
-        with open(f"{OUT}/all_extracted.json", "w") as f:
-            json.dump(all_results, f, indent=2)
-        print(f"\n[{SYMBOL}] COMPLETE: {len(all_results)} announcements, {page_no} pages", flush=True)
+        # Phase 2: download PDFs for each ann_id
+        n = await download_pdfs_for_ann(ann_ids)
+        print(f"\n[{SYMBOL}] COMPLETE: {n} PDFs downloaded from {len(ann_ids)} announcements", flush=True)
         await browser.close()
 
 
