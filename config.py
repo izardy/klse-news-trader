@@ -12,7 +12,9 @@ DB_PATH = os.environ.get("DB_PATH", "data/klse.db")
 PORT = int(os.environ.get("PORT", 5200))
 DEBUG = os.environ.get("DEBUG", "true").lower() == "true"
 
-# KLSE stock universe (major stocks)
+# KLSE stock universe — loaded dynamically from DB (see get_all_symbols())
+# This list is a fallback seed; the full universe (~900+) is populated by
+# scripts/fetch_klse_universe.py and stored in the stocks table.
 KLSE_STOCKS = [
     "MAYBANK", "PBBANK", "CIMB", "TENAGA", "PETGAS",
     "MAXIS", "AXIATA", "GENTING", "IHH", "NESTLE",
@@ -23,6 +25,18 @@ KLSE_STOCKS = [
     "MBSB", "BIMB", "MRCB", "SPSETIA", "IOIPG",
     "QL", "PPB", "HARTALEGA", "TOPGLOV", "SUPERMX"
 ]
+
+
+def get_all_symbols(db_path=None):
+    """Return all stock symbols from the stocks table (full KLSE universe)."""
+    import sqlite3
+    path = db_path or DB_PATH
+    conn = sqlite3.connect(path)
+    symbols = [r[0] for r in conn.execute(
+        "SELECT symbol FROM stocks ORDER BY symbol"
+    ).fetchall()]
+    conn.close()
+    return symbols if symbols else KLSE_STOCKS
 
 # News sources: Bursa announcements + KLSE Screener + Iceberg berita table
 USE_ICEBERG_BERITA = True

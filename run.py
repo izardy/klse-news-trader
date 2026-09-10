@@ -4,7 +4,7 @@ from datetime import datetime
 
 from flask import Flask, render_template, jsonify, request, abort
 
-from config import PORT, DEBUG, DB_PATH, KLSE_STOCKS
+from config import PORT, DEBUG, DB_PATH, get_all_symbols
 
 
 app = Flask(__name__)
@@ -37,7 +37,7 @@ def get_all_stocks():
     """Fetch all stocks with their latest data for the dashboard."""
     conn = get_db()
     stocks = []
-    for symbol in KLSE_STOCKS:
+    for symbol in get_all_symbols():
         # Get latest price
         price_row = conn.execute(
             "SELECT close, date FROM prices WHERE symbol = ? ORDER BY date DESC LIMIT 1",
@@ -100,7 +100,7 @@ def dashboard():
 @app.route("/stock/<symbol>")
 def stock_detail(symbol):
     """Individual stock detail page."""
-    if symbol not in KLSE_STOCKS:
+    if symbol not in get_all_symbols():
         abort(404)
 
     conn = get_db()
@@ -140,7 +140,7 @@ def api_refresh():
 @app.route("/api/analyze/<symbol>")
 def api_analyze(symbol):
     """Run analysis on a single stock and return results."""
-    if symbol not in KLSE_STOCKS:
+    if symbol not in get_all_symbols():
         abort(404)
 
     conn = get_db()

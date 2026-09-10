@@ -1073,9 +1073,52 @@ def seed_sector_sensitivity(db_path: str = None):
         conn.commit()
 
 
+# ─── Pipeline State ─────────────────────────────────────────────────────────
+# Tracks pipeline run timestamps and state
+
+PIPELINE_STATE_SQL = """
+CREATE TABLE IF NOT EXISTS pipeline_state (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_at TEXT
+);
+"""
+
+
+def init_pipeline_state(db_path: str = None):
+    """Create pipeline_state table if it doesn't exist."""
+    with get_conn(db_path) as conn:
+        conn.executescript(PIPELINE_STATE_SQL)
+
+
+def get_pipeline_state(key: str, db_path: str = None) -> Optional[str]:
+    """Get a pipeline state value by key."""
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT value FROM pipeline_state WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
+
+
+def set_pipeline_state(key: str, value: str, db_path: str = None):
+    """Set a pipeline state value."""
+    from datetime import datetime
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn(db_path) as conn:
+        conn.execute(
+            """INSERT INTO pipeline_state (key, value, updated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET
+                   value=excluded.value, updated_at=excluded.updated_at""",
+            (key, value, now)
+        )
+
+
 if __name__ == "__main__":
     init_db()
     seed_sector_sensitivity()
+    init_pipeline_state()
     print("Database initialized at", DB_PATH)
     print("Sector sensitivity seeded.")
+    print("Pipeline state table ready.")
     print("Table counts:", get_table_counts())
