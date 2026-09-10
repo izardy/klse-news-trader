@@ -279,6 +279,118 @@ CREATE TABLE IF NOT EXISTS dividend_history (
     FOREIGN KEY (symbol) REFERENCES stocks(symbol)
 );
 CREATE INDEX IF NOT EXISTS idx_dividend_symbol ON dividend_history(symbol, financial_year);
+
+-- ============================================================
+-- GRANULAR COMPANY METRICS (metric-level extraction from PDFs)
+-- Each row = one metric instance, fully traceable to source.
+-- Spec: docs/annual-report-extraction-spec.md
+-- ============================================================
+
+-- Company metric dictionary (canonical metric names by layer)
+CREATE TABLE IF NOT EXISTS metric_meta (
+    metric TEXT PRIMARY KEY,
+    layer TEXT NOT NULL,            -- Company Profile | Income Statement | Balance Sheet | ... | Red Flags
+    definition TEXT,                -- canonical definition of the metric
+    unit_hint TEXT,                 -- suggested unit: millions/thousands/percent/x/currency
+    reported_or_calculated TEXT,    -- 'reported' | 'calculated' | 'either'
+    is_ratio INTEGER DEFAULT 0      -- 1 = ratio/index, 0 = monetary/count
+);
+
+-- Metric-level extracted values (the core traceable table per spec)
+CREATE TABLE IF NOT EXISTS company_metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,           -- company stock code
+    report_id INTEGER,              -- FK annual_reports.id (which PDF)
+    metric TEXT NOT NULL,           -- canonical metric name
+    layer TEXT NOT NULL,            -- one of the 16 layers
+    value REAL,
+    currency TEXT,                  -- MYR / USD / SGD
+    unit TEXT,                      -- millions / thousands / raw / percent /
+    fiscal_year TEXT,               -- e.g. '2025'
+    period TEXT,                    -- 'FY2025' / 'Q1 2025' / '31-Dec-2025'
+    source_page INTEGER,            -- exact PDF page number (1-based)
+    source_section TEXT,            -- section it came from
+    reported_or_calculated TEXT,    -- 'reported' | 'calculated'
+    definition TEXT,                -- metric definition / note
+    extraction_source TEXT,         -- 'bedrock-nova-micro' | 'manual' | 'pdf-table'
+    raw_text TEXT,                  -- the exact text/label+value as it appears in PDF (audit)
+    confidence REAL,                -- 0-1 extraction confidence
+    extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(symbol, fiscal_year, period, metric, source_page),
+    FOREIGN KEY (symbol) REFERENCES stocks(symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_company_metrics_symbol_year ON company_metrics(symbol, fiscal_year);
+CREATE INDEX IF NOT EXISTS idx_company_metrics_metric ON company_metrics(metric);
+CREATE INDEX IF NOT EXISTS idx_company_metrics_layer ON company_metrics(layer);
+
+-- ============================================================
+-- ENTITY GRAPH: group structure + people/shareholder identities
+-- (extracted from annual reports; sister companies, directors, shareholders)
+-- ============================================================
+
+-- Subsidiary / associate / JV / parent relationships (entity graph edges)
+CREATE TABLE IF NOT EXISTS company_relationships (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,            -- the report's company (node A)
+    related_name TEXT NOT NULL,      -- subsidiary/sister/associate/JV/parent name (node B)
+    relationship_type TEXT NOT NULL, -- 'subsidiary' | 'sister' | 'associate' | 'joint_venture' | 'parent'
+    fiscal_year TEXT NOT NULL,       -- e.g. '2025' (time-bound edge)
+    stake_pct REAL,                  -- % ownership (for subsidiary/associate/parent)
+    effective_stake_pct REAL,        -- effective indirect stake if disclosed
+    source_page INTEGER,
+    source_section TEXT,
+    report_id INTEGER,
+    extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(symbol, related_name, relationship_type, fiscal_year, source_page),
+    FOREIGN KEY (symbol) REFERENCES stocks(symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_rel_sym ON company_relationships(symbol);
+CREATE INDEX IF NOT EXISTS idx_rel_related ON company_relationships(related_name);
+CREATE INDEX IF NOT EXISTS idx_rel_year ON company_relationships(fiscal_year);
+
+-- Directors / key management (people identities, time-bound)
+CREATE TABLE IF NOT EXISTS company_directors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    director_name TEXT NOT NULL,
+    fiscal_year TEXT NOT NULL,       -- board membership for that financial year
+    role TEXT,                       -- Chairman / CEO / ED / NED / Independent
+    title TEXT,                      -- honorific / full designation
+    tenure_years REAL,
+    remuneration_mym_real REAL,      -- annual fee/remuneration
+    independence TEXT,               -- 'independent' / 'non-independent'
+    source_page INTEGER,
+    source_section TEXT,
+    report_id INTEGER,
+    extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(symbol, director_name, fiscal_year, role, source_page),
+    FOREIGN KEY (symbol) REFERENCES stocks(symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_dir_sym ON company_directors(symbol);
+CREATE INDEX IF NOT EXISTS idx_dir_name ON company_directors(director_name);
+CREATE INDEX IF NOT EXISTS idx_dir_year ON company_directors(fiscal_year);
+
+-- Shareholders (people/institutions holding stake, time-bound)
+CREATE TABLE IF NOT EXISTS company_shareholders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    shareholder_name TEXT NOT NULL,
+    fiscal_year TEXT NOT NULL,       -- holding as of this financial year
+    shareholder_type TEXT,           -- 'individual' | 'institution' | 'investment_vehicle' | 'employee_fund'
+    stake_percent REAL,
+    shares_held REAL,
+    is_substantial INTEGER DEFAULT 0, -- >=5% holding
+    is_controlling INTEGER DEFAULT 0, -- controlling shareholder
+    source_page INTEGER,
+    source_section TEXT,
+    report_id INTEGER,
+    extracted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(symbol, shareholder_name, fiscal_year, source_page),
+    FOREIGN KEY (symbol) REFERENCES stocks(symbol)
+);
+CREATE INDEX IF NOT EXISTS idx_sh_sym ON company_shareholders(symbol);
+CREATE INDEX IF NOT EXISTS idx_sh_name ON company_shareholders(shareholder_name);
+CREATE INDEX IF NOT EXISTS idx_sh_year ON company_shareholders(fiscal_year);
 """
 
 
@@ -661,6 +773,144 @@ def get_dividends(symbol: str, financial_year: str = None, db_path: str = None) 
 
 # ─── Annual Reports - Mark Processed ───────────────────────────────────────────
 
+def insert_company_metric(symbol, metric, layer, value=None, currency=None, unit=None,
+                          fiscal_year=None, period=None, source_page=None, source_section=None,
+                          reported_or_calculated='reported', definition=None,
+                          extraction_source='bedrock-nova-micro', raw_text=None, confidence=None,
+                          report_id=None, db_path=None):
+    """Insert one metric instance into the traceable company_metrics table.
+    Core structure per spec: one row per metric, fully source-traceable."""
+    with get_conn(db_path) as conn:
+        try:
+            conn.execute(
+                """INSERT INTO company_metrics
+                   (symbol, report_id, metric, layer, value, currency, unit, fiscal_year, period,
+                    source_page, source_section, reported_or_calculated, definition,
+                    extraction_source, raw_text, confidence)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (symbol, report_id, metric, layer, value, currency, unit, fiscal_year, period,
+                 source_page, source_section, reported_or_calculated, definition,
+                 extraction_source, raw_text, confidence)
+            )
+            conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False  # duplicate (symbol,year,period,metric,page)
+
+
+def insert_company_metrics_bulk(rows, db_path=None):
+    """Bulk insert many metric rows. rows = list of dicts for insert_company_metric."""
+    n = 0
+    for r in rows:
+        if insert_company_metric(**r, db_path=db_path):
+            n += 1
+    return n
+
+
+def get_company_metrics(symbol=None, metric=None, layer=None, fiscal_year=None, db_path=None):
+    """Query company_metrics with optional filters."""
+    conds, args = [], []
+    if symbol:
+        conds.append("symbol = ?"); args.append(symbol)
+    if metric:
+        conds.append("metric = ?"); args.append(metric)
+    if layer:
+        conds.append("layer = ?"); args.append(layer)
+    if fiscal_year:
+        conds.append("fiscal_year = ?"); args.append(fiscal_year)
+    where = "WHERE " + " AND ".join(conds) if conds else ""
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM company_metrics {where} ORDER BY fiscal_year DESC, metric LIMIT 500", args
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_metrics_summary(symbol, db_path=None):
+    """Return all metrics for a company as a pivot: {metric: {fiscal_year: value}}."""
+    rows = get_company_metrics(symbol=symbol, db_path=db_path)
+    out = {}
+    for r in rows:
+        out.setdefault(r["metric"], {})[r["fiscal_year"]] = r["value"]
+    return out
+
+
+# ─── Entity graph (relationships, directors, shareholders) ───────────────────
+
+def insert_relationship(symbol, related_name, relationship_type, fiscal_year,
+                        stake_pct=None, effective_stake_pct=None,
+                        source_page=None, source_section=None, report_id=None, db_path=None):
+    with get_conn(db_path) as conn:
+        try:
+            conn.execute(
+                """INSERT INTO company_relationships
+                   (symbol, related_name, relationship_type, fiscal_year, stake_pct,
+                    effective_stake_pct, source_page, source_section, report_id)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (symbol, related_name, relationship_type, fiscal_year, stake_pct,
+                 effective_stake_pct, source_page, source_section, report_id)
+            ); conn.commit(); return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def insert_director(symbol, director_name, fiscal_year, role=None, title=None,
+                    tenure_years=None, remuneration_myr=None, independence=None,
+                    source_page=None, source_section=None, report_id=None, db_path=None):
+    with get_conn(db_path) as conn:
+        try:
+            conn.execute(
+                """INSERT INTO company_directors
+                   (symbol, director_name, fiscal_year, role, title, tenure_years,
+                    remuneration_mym_real, independence, source_page, source_section, report_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (symbol, director_name, fiscal_year, role, title, tenure_years,
+                 remuneration_myr, independence, source_page, source_section, report_id)
+            ); conn.commit(); return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def insert_shareholder(symbol, shareholder_name, fiscal_year, shareholder_type=None,
+                       stake_percent=None, shares_held=None, is_substantial=0, is_controlling=0,
+                       source_page=None, source_section=None, report_id=None, db_path=None):
+    with get_conn(db_path) as conn:
+        try:
+            conn.execute(
+                """INSERT INTO company_shareholders
+                   (symbol, shareholder_name, fiscal_year, shareholder_type, stake_percent,
+                    shares_held, is_substantial, is_controlling, source_page, source_section, report_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (symbol, shareholder_name, fiscal_year, shareholder_type, stake_percent,
+                 shares_held, is_substantial, is_controlling, source_page, source_section, report_id)
+            ); conn.commit(); return True
+        except sqlite3.IntegrityError:
+            return False
+
+
+def get_relationships(symbol=None, db_path=None):
+    conds, args = ("symbol=?", [symbol]) if symbol else ("1=1", [])
+    with get_conn(db_path) as conn:
+        rows = conn.execute(f"SELECT * FROM company_relationships WHERE {conds} ORDER BY symbol, relationship_type", args).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_directors(symbol=None, db_path=None):
+    conds, args = ("symbol=?", [symbol]) if symbol else ("1=1", [])
+    with get_conn(db_path) as conn:
+        rows = conn.execute(f"SELECT * FROM company_directors WHERE {conds} ORDER BY symbol, director_name", args).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_shareholders(symbol=None, db_path=None):
+    conds, args = ("symbol=?", [symbol]) if symbol else ("1=1", [])
+    with get_conn(db_path) as conn:
+        rows = conn.execute(f"SELECT * FROM company_shareholders WHERE {conds} ORDER BY stake_percent DESC", args).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ─── Annual Reports - Mark Processed ───────────────────────────────────────────
+
 def mark_report_processed(report_id: int, db_path: str = None):
     with get_conn(db_path) as conn:
         conn.execute(
@@ -693,6 +943,38 @@ def get_table_counts(db_path: str = None) -> dict:
             row = conn.execute(f"SELECT COUNT(*) as cnt FROM {t}").fetchone()
             counts[t] = row["cnt"]
     return counts
+
+
+# ─── Macro CRUD ──────────────────────────────────────────────────────────────
+
+def upsert_macro_indicator(date: str, indicator_name: str, value: float,
+                           unit: str = None, source: str = None, db_path: str = None):
+    """Insert or update a macro indicator value for a given date."""
+    with get_conn(db_path) as conn:
+        conn.execute(
+            """INSERT INTO macro_indicators (date, indicator_name, value, unit, source)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(date, indicator_name) DO UPDATE SET
+                   value=excluded.value, unit=excluded.unit, source=excluded.source,
+                   updated_at=CURRENT_TIMESTAMP""",
+            (date, indicator_name, value, unit, source)
+        )
+
+
+def upsert_macro_calendar(event_date: str, event_name: str, country: str = "MY",
+                          importance: str = "medium", previous: float = None,
+                          forecast: float = None, actual: float = None,
+                          db_path: str = None):
+    """Insert or update a macro calendar event."""
+    with get_conn(db_path) as conn:
+        conn.execute(
+            """INSERT INTO macro_calendar (event_date, event_name, country, importance, previous, forecast, actual)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(event_date, event_name) DO UPDATE SET
+                   previous=excluded.previous, forecast=excluded.forecast,
+                   actual=excluded.actual, importance=excluded.importance""",
+            (event_date, event_name, country, importance, previous, forecast, actual)
+        )
 
 
 # ─── Macro Helpers ──────────────────────────────────────────────────────────

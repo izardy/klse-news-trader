@@ -60,46 +60,47 @@ KLSE_STOCKS = {
 
 # Build keyword matching patterns
 # Map common abbreviations / keywords to stock symbols
+# Order matters: more specific patterns first to avoid false matches
 STOCK_KEYWORDS = {
-    "MAYBANK": ["maybank", "malayan banking"],
-    "PBBANK": ["public bank"],
-    "CIMB": ["cimb group", "cimb"],
-    "TENAGA": ["tenaga", "tenaga nasional"],
+    "MAYBANK": ["maybank", "malayan banking", "malayan banking bhd", "maybank group", "maybank ib"],
+    "PBBANK": ["public bank", "public bank bhd", "public islamic"],
+    "CIMB": ["cimb group", "cimb bank", "cimb", "cimb niaga"],
+    "TENAGA": ["tenaga nasional", "tenaga", "tnb"],
     "PETGAS": ["petronas gas", "petgas"],
-    "MAXIS": ["maxis"],
-    "AXIATA": ["axiata"],
-    "GENTING": ["genting"],
-    "IHH": ["ihh", "ihh healthcare"],
-    "NESTLE": ["nestle", "nestlé"],
-    "SIME": ["sime darby", "sime"],
-    "TM": ["telekom malaysia", "telekom"],
+    "MAXIS": ["maxis", "maxis bh", "maxis broadband"],
+    "AXIATA": ["axiata", "axiata group", "celcom", "celcomdigi", "digi"],
+    "GENTING": ["genting group", "genting berhad", "genting singapore", "genting group"],
+    "IHH": ["ihh healthcare", "ihh", "parkway", "gleneagles"],
+    "NESTLE": ["nestle", "nestlé", "nestle malaysia"],
+    "SIME": ["sime darby", "sime", "sime darby property", "sime darby plantation"],
+    "TM": ["telekom malaysia", "telekom", "tm group", "unifi"],
     "DIALOG": ["dialog group", "dialog"],
-    "YTL": ["ytl corp", "ytl corporation", "ytl"],
-    "PCHEM": ["petronas chemicals", "pchem"],
-    "IOICORP": ["ioi corporation", "ioi corp", "ioicorp"],
-    "KLK": ["klk", "kepong", "kuala lumpur kepong"],
-    "BAT": ["british american tobacco", "bat malaysia"],
-    "MRDIY": ["mr diy", "mrdiy", "d.i.y"],
-    "GAMUDA": ["gamuda"],
-    "UWC": ["uwc"],
-    "GENM": ["genting malaysia", "genm"],
-    "SD Guthrie": ["sd guthrie", "sime darby plantation", "sdg"],
-    "VITROX": ["vitrox"],
-    "INARI": ["inari", "inari amertron"],
-    "UNISEM": ["unisem"],
-    "FRONTKEN": ["frontken"],
-    "D&O": ["d & o", "d&o", "green technologies"],
-    "GHL": ["ghl", "ghl systems"],
-    "KENANGA": ["kenanga", "kenanga investment"],
-    "MBSB": ["mbsb", "mbsb bank"],
-    "BIMB": ["bimb", "bimb holdings", "bank islam"],
-    "MRCB": ["mrcb", "malaysian resources"],
+    "YTL": ["ytl corporation", "ytl power", "ytl", "yeoh tiong lay"],
+    "PCHEM": ["petronas chemicals", "pchem", "petronas chemical"],
+    "IOICORP": ["ioi corporation", "ioi corp", "ioi group", "ioicorp"],
+    "KLK": ["kuala lumpur kepong", "klk", "kl kepong", "batu kawan"],
+    "BAT": ["british american tobacco", "bat malaysia", "bat (malaysia)"],
+    "MRDIY": ["mr diy", "mrdiy", "mr.diy", "d.i.y group"],
+    "GAMUDA": ["gamuda", "gamuda engineering"],
+    "UWC": ["uwc", "uwc berhad"],
+    "GENM": ["genting malaysia", "genm", "genting malaysia"],
+    "SD Guthrie": ["sd guthrie", "sdg", "sime darby plantation", "sd guthrie berhad"],
+    "VITROX": ["vitrox", "vitrox corp"],
+    "INARI": ["inari amertron", "inari", "amertron"],
+    "UNISEM": ["unisem", "unisem m"],
+    "FRONTKEN": ["frontken", "frontken corporation"],
+    "D&O": ["d & o green", "d&o green", "d & o", "d&o"],
+    "GHL": ["ghl systems", "ghl", "ghl transaction"],
+    "KENANGA": ["kenanga investment", "kenanga", "kenanga ib"],
+    "MBSB": ["mbsb bank", "mbsb", "malaysia building society"],
+    "BIMB": ["bimb holdings", "bank islam", "bimb", "bank islam malaysia"],
+    "MRCB": ["malaysian resources", "mrcb", "mrcb group"],
     "SPSETIA": ["sp setia", "spsetia", "setia"],
-    "IOIPG": ["ioi properties", "ioipg"],
-    "QL": ["ql resources", "ql group", "ql"],
-    "PPB": ["ppb group", "ppb", "wilmar"],
-    "HARTALEGA": ["hartalega"],
-    "TOPGLOV": ["top glove", "topglov"],
+    "IOIPG": ["ioi properties", "ioipg", "ioi properties group"],
+    "QL": ["ql resources", "ql group", "ql", "ql seafood"],
+    "PPB": ["ppb group", "ppb", "wilmar", "f fm"],
+    "HARTALEGA": ["hartalega", "hartalega holdings"],
+    "TOPGLOV": ["top glove", "topglov", "topglove"],
     "SUPERMX": ["supermax", "supermx"],
 }
 
@@ -108,14 +109,25 @@ def match_stock(text: str) -> str:
     """
     Match text to a stock symbol based on keywords.
     Returns symbol or None.
+    Uses word-boundary matching to reduce false positives.
     """
     if not text:
         return None
     text_lower = text.lower()
+    
+    # Priority matching: check longer/more specific keywords first
+    # Sort all (symbol, keyword) pairs by keyword length descending
+    all_patterns = []
     for symbol, keywords in STOCK_KEYWORDS.items():
         for kw in keywords:
-            if kw in text_lower:
-                return symbol
+            all_patterns.append((symbol, kw))
+    
+    # Sort by keyword length (longest first) for more specific matches
+    all_patterns.sort(key=lambda x: len(x[1]), reverse=True)
+    
+    for symbol, kw in all_patterns:
+        if kw in text_lower:
+            return symbol
     return None
 
 
