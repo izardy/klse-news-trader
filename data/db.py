@@ -7,7 +7,8 @@ import os
 from contextlib import contextmanager
 from typing import Optional
 
-DB_PATH = os.environ.get("DB_PATH", "data/klse.db")
+_DEFAULT_DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "klse.db")
+DB_PATH = os.environ.get("DB_PATH", _DEFAULT_DB)
 
 SCHEMA_SQL = """
 -- Stock universe master table
@@ -109,6 +110,53 @@ CREATE TABLE IF NOT EXISTS annual_reports (
     FOREIGN KEY (symbol) REFERENCES stocks(symbol)
 );
 CREATE INDEX IF NOT EXISTS idx_annual_reports_symbol ON annual_reports(symbol);
+
+-- ============================================================
+-- MACROECONOMIC DATA (for MY stock analysis + ML features)
+-- ============================================================
+
+-- Macroeconomic indicators (monthly/quarterly data points)
+CREATE TABLE IF NOT EXISTS macro_indicators (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL,              -- YYYY-MM-DD (month-end or quarter-end)
+    indicator_name TEXT NOT NULL,    -- 'OPR', 'CPI_inflation', 'GDP_growth', 'USD_MYR', etc.
+    value REAL,
+    unit TEXT,                       -- 'percent', 'MYR', 'index', etc.
+    source TEXT,                     -- 'BNM', 'DOSM', 'FRED', 'tradingeconomics'
+    frequency TEXT,                  -- 'monthly', 'quarterly', 'daily'
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(date, indicator_name)
+);
+CREATE INDEX IF NOT EXISTS idx_macro_indicator_date ON macro_indicators(indicator_name, date);
+CREATE INDEX IF NOT EXISTS idx_macro_date ON macro_indicators(date);
+
+-- Macro economic calendar (upcoming events)
+CREATE TABLE IF NOT EXISTS macro_calendar (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_date TEXT NOT NULL,
+    event_name TEXT NOT NULL,        -- 'BNM OPR Meeting', 'CPI Release', etc.
+    country TEXT DEFAULT 'MY',
+    importance TEXT,                 -- 'high', 'medium', 'low'
+    previous_value REAL,
+    forecast_value REAL,
+    actual_value REAL,
+    unit TEXT,
+    source TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_macro_calendar_date ON macro_calendar(event_date);
+
+-- Sector sensitivity to macro indicators (for ML feature engineering)
+CREATE TABLE IF NOT EXISTS sector_sensitivity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sector TEXT NOT NULL,            -- 'Banks', 'Plantation', 'Technology', etc.
+    indicator_name TEXT NOT NULL,    -- 'OPR', 'USD_MYR', 'palm_oil_price', etc.
+    correlation_direction TEXT,      -- 'positive', 'negative', 'neutral'
+    impact_magnitude REAL,           -- 0-1 scale of how strongly this affects the sector
+    notes TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(sector, indicator_name)
+);
 
 -- Company profile (static info, one row per stock)
 CREATE TABLE IF NOT EXISTS company_profile (
@@ -637,7 +685,8 @@ def get_table_counts(db_path: str = None) -> dict:
     tables = ["stocks", "prices", "news", "news_sentiment",
               "ml_features", "recommendations", "annual_reports",
               "company_profile", "company_fundamentals", "segment_breakdown",
-              "risk_factors", "dividend_history"]
+              "risk_factors", "dividend_history",
+              "macro_indicators", "macro_calendar", "sector_sensitivity"]
     counts = {}
     with get_conn(db_path) as conn:
         for t in tables:
@@ -646,7 +695,105 @@ def get_table_counts(db_path: str = None) -> dict:
     return counts
 
 
+# ─── Macro Helpers ──────────────────────────────────────────────────────────
+
+def get_latest_macro(indicator_name: str, db_path: str = None) -> Optional[dict]:
+    """Get the most recent value of a macro indicator."""
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM macro_indicators WHERE indicator_name = ? ORDER BY date DESC LIMIT 1",
+            (indicator_name,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_macro_series(indicator_name: str, limit: int = 60, db_path: str = None) -> list:
+    """Get time series of a macro indicator."""
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT date, value FROM macro_indicators WHERE indicator_name = ? ORDER BY date DESC LIMIT ?",
+            (indicator_name, limit)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_upcoming_macro_events(days_ahead: int = 30, db_path: str = None) -> list:
+    """Get upcoming macro calendar events."""
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM macro_calendar WHERE event_date >= date('now') AND event_date <= date('now', ?) ORDER BY event_date",
+            (f"+{days_ahead} days",)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_sector_sensitivity(sector: str, db_path: str = None) -> list:
+    """Get macro sensitivities for a sector."""
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM sector_sensitivity WHERE sector = ? ORDER BY impact_magnitude DESC",
+            (sector,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def seed_sector_sensitivity(db_path: str = None):
+    """Seed sector sensitivity table with known macro relationships."""
+    data = [
+        # Banks
+        ("Banks", "OPR", "positive", 0.9, "Higher OPR = higher net interest margins for banks"),
+        ("Banks", "GDP_growth", "positive", 0.7, "Strong GDP = more lending activity"),
+        ("Banks", "CPI_inflation", "negative", 0.5, "High inflation may lead to rate hikes, but erodes loan quality"),
+        ("Banks", "USD_MYR", "neutral", 0.2, "Limited direct FX exposure for local banks"),
+        # Plantation
+        ("Plantation", "palm_oil_price", "positive", 0.95, "Direct revenue driver"),
+        ("Plantation", "USD_MYR", "positive", 0.6, "Weaker ringgit = higher MYR palm oil revenue"),
+        ("Plantation", "GDP_growth", "positive", 0.3, "Domestic demand for food products"),
+        ("Plantation", "crude_oil_price", "positive", 0.4, "Higher oil = biofuel demand supports palm oil"),
+        # Technology
+        ("Technology", "USD_MYR", "positive", 0.8, "Most tech companies earn USD (exporters)"),
+        ("Technology", "global_semiconductor_demand", "positive", 0.9, "Direct revenue driver"),
+        ("Technology", "OPR", "negative", 0.3, "Higher rates reduce growth stock valuations"),
+        ("Technology", "CPI_inflation", "negative", 0.4, "Inflation erodes real earnings"),
+        # Oil & Gas
+        ("Oil & Gas", "crude_oil_price", "positive", 0.95, "Direct revenue driver"),
+        ("Oil & Gas", "USD_MYR", "positive", 0.7, "Oil priced in USD, weaker ringgit = higher MYR revenue"),
+        ("Oil & Gas", "GDP_growth", "positive", 0.4, "Energy demand correlates with economic activity"),
+        # Property
+        ("Property", "OPR", "negative", 0.8, "Higher rates = higher mortgage costs, lower demand"),
+        ("Property", "GDP_growth", "positive", 0.7, "Strong economy = more property demand"),
+        ("Property", "CPI_inflation", "negative", 0.5, "Construction cost inflation squeezes margins"),
+        ("Property", "unemployment_rate", "negative", 0.6, "High unemployment = lower purchasing power"),
+        # Healthcare
+        ("Healthcare", "OPR", "negative", 0.3, "Moderate impact from financing costs"),
+        ("Healthcare", "GDP_growth", "positive", 0.5, "More healthcare spending in good times"),
+        ("Healthcare", "USD_MYR", "negative", 0.4, "Medical supplies often imported"),
+        # Consumer/Retail
+        ("Consumer", "CPI_inflation", "negative", 0.7, "Inflation erodes consumer purchasing power"),
+        ("Consumer", "GDP_growth", "positive", 0.6, "Strong economy = more discretionary spending"),
+        ("Consumer", "unemployment_rate", "negative", 0.7, "High unemployment = lower retail sales"),
+        ("Consumer", "OPR", "negative", 0.5, "Higher rates = higher financing costs for consumers"),
+        # Telecommunications
+        ("Telecommunications", "OPR", "negative", 0.4, "Highly leveraged, sensitive to rate changes"),
+        ("Telecommunications", "GDP_growth", "positive", 0.5, "More data/economic activity = more usage"),
+        ("Telecommunications", "USD_MYR", "negative", 0.3, "Equipment imported in USD"),
+        # Construction
+        ("Construction", "OPR", "negative", 0.7, "Higher rates = higher project financing costs"),
+        ("Construction", "GDP_growth", "positive", 0.8, "Infrastructure spending drives construction"),
+        ("Construction", "CPI_inflation", "negative", 0.6, "Material cost inflation squeezes margins"),
+        ("Construction", "unemployment_rate", "negative", 0.4, "Labor availability concerns"),
+    ]
+    with get_conn(db_path) as conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO sector_sensitivity (sector, indicator_name, correlation_direction, impact_magnitude, notes) VALUES (?, ?, ?, ?, ?)",
+            data
+        )
+        conn.commit()
+
+
 if __name__ == "__main__":
     init_db()
+    seed_sector_sensitivity()
     print("Database initialized at", DB_PATH)
+    print("Sector sensitivity seeded.")
     print("Table counts:", get_table_counts())
