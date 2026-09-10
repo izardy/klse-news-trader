@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.env
+
+# Database
+data/klse.db
+data/klse.db-journal
+
+# Downloaded PDFs (annual reports, etc.)
+data/pdfs/
+pdfs/
+
+# ML models
+models/
+*.pkl
+*.joblib
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/

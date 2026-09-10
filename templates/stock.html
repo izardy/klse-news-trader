@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <title>{{ symbol }} - KLSE News Trader</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+<!-- Top Navbar -->
+<nav class="navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="/">
+            <i class="fas fa-chart-line me-2"></i>KLSE News Trader
+        </a>
+        <a href="/" class="btn btn-sm btn-outline-light">
+            <i class="fas fa-arrow-left me-1"></i>Back
+        </a>
+    </div>
+</nav>
+
+<div class="container-fluid mt-3">
+
+    <!-- Stock Header -->
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="card stock-detail-header">
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-4 mb-2 mb-md-0">
+                            <h2 class="mb-0">{{ symbol }}</h2>
+                            {% if score_row %}
+                                {% if score_row.signal == 'BUY' %}
+                                    <span class="badge signal-buy mt-2">BUY</span>
+                                {% elif score_row.signal == 'WATCH' %}
+                                    <span class="badge signal-watch mt-2">WATCH</span>
+                                {% elif score_row.signal == 'AVOID' %}
+                                    <span class="badge signal-avoid mt-2">AVOID</span>
+                                {% else %}
+                                    <span class="badge signal-na mt-2">N/A</span>
+                                {% endif %}
+                            {% endif %}
+                        </div>
+                        <div class="col-md-4 mb-2 mb-md-0 text-center">
+                            {% if price_history %}
+                                <h3 class="mb-0">RM {{ "%.2f"|format(price_history[0].close) }}</h3>
+                                <small class="text-muted">Last updated: {{ price_history[0].date }}</small>
+                            {% else %}
+                                <p class="text-muted">No price data available</p>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-4 text-md-end">
+                            {% if score_row %}
+                                <div class="score-ring score-lg {% if score_row.score >= 7 %}score-high{% elif score_row.score >= 4 %}score-mid{% else %}score-low{% endif %}">
+                                    {{ score_row.score|int }}
+                                </div>
+                                <small class="text-muted d-block mt-1">Score / 10</small>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Price Chart -->
+    <div class="row mb-3">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title" style="color: #A8ADB5;">Price History (90 days)</h5>
+                    {% if chart_points %}
+                    <div class="price-chart-container">
+                        <svg class="price-chart" viewBox="0 0 600 150" preserveAspectRatio="none">
+                            <polyline points="{{ chart_points }}" fill="none" stroke="#42A5F5" stroke-width="2"/>
+                        </svg>
+                    </div>
+                    {% else %}
+                    <p class="text-muted">No price data available.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- News Section -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <h5 class="card-title" style="color: #A8ADB5;">
+                        <i class="far fa-newspaper me-2"></i>Latest News
+                    </h5>
+                    {% if news_items %}
+                    <div class="list-group list-group-flush">
+                        {% for news in news_items %}
+                        <a href="{{ news.url }}" target="_blank" class="list-group-item list-group-item-action news-item">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <h6 class="mb-1">{{ news.title }}</h6>
+                                <small class="text-muted ms-2" style="min-width: 80px;">{{ news.date[:10] if news.date else '' }}</small>
+                            </div>
+                            <small class="text-muted">{{ news.source or 'Unknown' }}</small>
+                        </a>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="text-muted">No news articles found for this stock.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Analyze Button -->
+    <div class="row mt-3 mb-4">
+        <div class="col-12 text-center">
+            <button class="btn btn-primary" onclick="analyzeStock('{{ symbol }}')">
+                <i class="fas fa-brain me-1"></i>Run Analysis
+            </button>
+            <div id="analysis-result" class="mt-2"></div>
+        </div>
+    </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+function analyzeStock(symbol) {
+    fetch('/api/analyze/' + symbol)
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('analysis-result').innerHTML =
+                '<div class="alert alert-info">Analysis complete: ' + data.price_data_points + ' price points, ' + data.news_count + ' news articles.</div>';
+        })
+        .catch(err => {
+            document.getElementById('analysis-result').innerHTML =
+                '<div class="alert alert-danger">Analysis failed: ' + err + '</div>';
+        });
+}
+</script>
+
+</body>
+</html>

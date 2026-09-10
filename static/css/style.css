@@ -1,0 +1,394 @@
+/* KLSE News Trader - Dark Theme Styles */
+
+body {
+    margin: 0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #1c1f29;
+    color: #C9D1D9;
+    min-height: 100vh;
+}
+
+/* Navbar */
+.navbar {
+    background: #111625 !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 0.6rem 1rem;
+}
+
+.navbar-brand {
+    color: #42A5F5 !important;
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+/* Cards */
+.card {
+    background: #111625;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+}
+
+.card-body {
+    padding: 1rem;
+}
+
+.stat-card {
+    background: #111625;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    transition: border-color 0.2s;
+}
+
+.stat-card:hover {
+    border-color: rgba(66, 165, 245, 0.3);
+}
+
+.stat-label {
+    color: #A8ADB5;
+    font-size: 0.7rem;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.3rem;
+}
+
+.stat-value {
+    color: #fff;
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 0;
+}
+
+/* Stock Cards */
+.stock-card {
+    cursor: pointer;
+    transition: transform 0.15s, border-color 0.2s;
+    height: 100%;
+}
+
+.stock-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(66, 165, 245, 0.4);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.stock-symbol a {
+    color: #fff;
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+.stock-symbol a:hover {
+    color: #42A5F5;
+}
+
+.stock-price {
+    color: #C9D1D9;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+/* Signal Badges */
+.badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 0.35em 0.65em;
+    border-radius: 4px;
+}
+
+.signal-buy {
+    background: rgba(76, 175, 80, 0.2);
+    color: #4CAF50;
+    border: 1px solid rgba(76, 175, 80, 0.3);
+}
+
+.signal-watch {
+    background: rgba(255, 152, 0, 0.2);
+    color: #FF9800;
+    border: 1px solid rgba(255, 152, 0, 0.3);
+}
+
+.signal-avoid {
+    background: rgba(244, 67, 54, 0.2);
+    color: #F44336;
+    border: 1px solid rgba(244, 67, 54, 0.3);
+}
+
+.signal-na {
+    background: rgba(158, 158, 158, 0.2);
+    color: #9E9E9E;
+    border: 1px solid rgba(158, 158, 158, 0.3);
+}
+
+/* Score Ring */
+.score-ring {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.85rem;
+    border: 2px solid;
+}
+
+.score-ring.score-lg {
+    width: 56px;
+    height: 56px;
+    font-size: 1.3rem;
+    display: inline-flex;
+}
+
+.score-high {
+    color: #4CAF50;
+    border-color: #4CAF50;
+    background: rgba(76, 175, 80, 0.1);
+}
+
+.score-mid {
+    color: #FF9800;
+    border-color: #FF9800;
+    background: rgba(255, 152, 0, 0.1);
+}
+
+.score-low {
+    color: #F44336;
+    border-color: #F44336;
+    background: rgba(244, 67, 54, 0.1);
+}
+
+.score-na {
+    color: #666;
+    border-color: #444;
+    background: rgba(100, 100, 100, 0.1);
+}
+
+/* Sparkline */
+.sparkline-container {
+    height: 30px;
+    width: 100%;
+}
+
+.sparkline {
+    width: 100%;
+    height: 100%;
+}
+
+/* Price Chart */
+.price-chart-container {
+    height: 150px;
+    width: 100%;
+}
+
+.price-chart {
+    width: 100%;
+    height: 100%;
+}
+
+/* News */
+.news-info {
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    padding-top: 0.5rem;
+    margin-top: 0.3rem;
+}
+
+.news-headline {
+    font-size: 0.75rem;
+    color: #A8ADB5;
+    margin-top: 0.25rem;
+    line-height: 1.3;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+/* News list on detail page */
+.news-item {
+    background: transparent;
+    border-color: rgba(255, 255, 255, 0.06);
+    color: #C9D1D9;
+    padding: 0.75rem 0.5rem;
+}
+
+.news-item:hover {
+    background: rgba(66, 165, 245, 0.05);
+    color: #fff;
+}
+
+.news-item h6 {
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+/* Search Input */
+.search-input {
+    background: #111625;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #C9D1D9;
+}
+
+.search-input:focus {
+    background: #111625;
+    border-color: #42A5F5;
+    color: #C9D1D9;
+    box-shadow: 0 0 0 0.2rem rgba(66, 165, 245, 0.15);
+}
+
+.search-input::placeholder {
+    color: #666;
+}
+
+/* Buttons */
+.btn-outline-light {
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #A8ADB5;
+}
+
+.btn-outline-light:hover,
+.btn-outline-light.active {
+    background: rgba(66, 165, 245, 0.15);
+    border-color: #42A5F5;
+    color: #42A5F5;
+}
+
+.btn-outline-success {
+    border-color: rgba(76, 175, 80, 0.3);
+    color: #4CAF50;
+}
+
+.btn-outline-success:hover,
+.btn-outline-success.active {
+    background: rgba(76, 175, 80, 0.15);
+    border-color: #4CAF50;
+    color: #4CAF50;
+}
+
+.btn-outline-warning {
+    border-color: rgba(255, 152, 0, 0.3);
+    color: #FF9800;
+}
+
+.btn-outline-warning:hover,
+.btn-outline-warning.active {
+    background: rgba(255, 152, 0, 0.15);
+    border-color: #FF9800;
+    color: #FF9800;
+}
+
+.btn-outline-danger {
+    border-color: rgba(244, 67, 54, 0.3);
+    color: #F44336;
+}
+
+.btn-outline-danger:hover,
+.btn-outline-danger.active {
+    background: rgba(244, 67, 54, 0.15);
+    border-color: #F44336;
+    color: #F44336;
+}
+
+.btn-primary {
+    background: #42A5F5;
+    border-color: #42A5F5;
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background: #1E88E5;
+    border-color: #1E88E5;
+}
+
+/* Stock Detail Header */
+.stock-detail-header {
+    background: linear-gradient(135deg, #111625 0%, #1a1f2e 100%);
+}
+
+/* Alerts */
+.alert-info {
+    background: rgba(66, 165, 245, 0.1);
+    border-color: rgba(66, 165, 245, 0.3);
+    color: #42A5F5;
+}
+
+.alert-danger {
+    background: rgba(244, 67, 54, 0.1);
+    border-color: rgba(244, 67, 54, 0.3);
+    color: #F44336;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .stat-value {
+        font-size: 1.2rem;
+    }
+
+    .stock-symbol a {
+        font-size: 0.95rem;
+    }
+
+    .stock-price {
+        font-size: 0.95rem;
+    }
+
+    .score-ring {
+        width: 30px;
+        height: 30px;
+        font-size: 0.75rem;
+    }
+
+    .score-ring.score-lg {
+        width: 44px;
+        height: 44px;
+        font-size: 1.1rem;
+    }
+
+    .news-headline {
+        font-size: 0.7rem;
+    }
+
+    .navbar-brand {
+        font-size: 0.95rem;
+    }
+
+    #last-updated {
+        display: none;
+    }
+}
+
+@media (max-width: 576px) {
+    .container-fluid {
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+    }
+
+    .card-body {
+        padding: 0.75rem;
+    }
+
+    .stat-label {
+        font-size: 0.6rem;
+    }
+
+    .stat-value {
+        font-size: 1rem;
+    }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1c1f29;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
