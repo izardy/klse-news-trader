@@ -7,6 +7,17 @@ from flask import Flask, render_template, jsonify, request, abort
 from config import PORT, DEBUG, DB_PATH, get_all_symbols
 
 
+def get_symbols_from_db():
+    """Load active stock symbols from database."""
+    import sqlite3
+    conn = sqlite3.connect(DB_PATH)
+    symbols = [r[0] for r in conn.execute(
+        "SELECT symbol FROM stocks WHERE is_active = 1 ORDER BY symbol"
+    ).fetchall()]
+    conn.close()
+    return symbols if symbols else get_all_symbols()
+
+
 app = Flask(__name__)
 
 
@@ -100,7 +111,8 @@ def dashboard():
 @app.route("/stock/<symbol>")
 def stock_detail(symbol):
     """Individual stock detail page."""
-    if symbol not in get_all_symbols():
+    valid_symbols = set(get_symbols_from_db())
+    if symbol not in valid_symbols:
         abort(404)
 
     conn = get_db()
@@ -140,7 +152,8 @@ def api_refresh():
 @app.route("/api/analyze/<symbol>")
 def api_analyze(symbol):
     """Run analysis on a single stock and return results."""
-    if symbol not in get_all_symbols():
+    valid_symbols = set(get_symbols_from_db())
+    if symbol not in valid_symbols:
         abort(404)
 
     conn = get_db()

@@ -280,29 +280,38 @@ def fetch_forex_daily(base: str = "USD", quote: str = "MYR",
 
 
 def fetch_yahoo_commodity(symbol: str, range_str: str = "10y",
-                          interval: str = "1mo") -> list:
+                          interval: str = "1mo", max_retries: int = 3) -> list:
     """Fetch historical commodity prices from Yahoo Finance.
+    Uses query2 subdomain with retry logic.
     Returns list of (timestamp, close_price) tuples."""
     url = (
-        f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+        f"https://query2.finance.yahoo.com/v8/finance/chart/{symbol}"
         f"?range={range_str}&interval={interval}"
     )
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=15)
-        if resp.status_code == 200:
-            data = resp.json()
-            result = data.get("chart", {}).get("result", [])
-            if result:
-                timestamps = result[0].get("timestamp", [])
-                closes = result[0].get("indicators", {}).get(
-                    "quote", [{}]
-                )[0].get("close", [])
-                return [
-                    (t, c) for t, c in zip(timestamps, closes)
-                    if c is not None
-                ]
-    except Exception as e:
-        print(f"  Yahoo Finance error ({symbol}): {e}")
+    yahoo_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+    }
+
+    for attempt in range(max_retries):
+        try:
+            resp = requests.get(url, headers=yahoo_headers, timeout=15)
+            if resp.status_code == 200 and resp.text.strip():
+                data = resp.json()
+                result = data.get("chart", {}).get("result", [])
+                if result:
+                    timestamps = result[0].get("timestamp", [])
+                    closes = result[0].get("indicators", {}).get(
+                        "quote", [{}]
+                    )[0].get("close", [])
+                    return [
+                        (t, c) for t, c in zip(timestamps, closes)
+                        if c is not None
+                    ]
+        except Exception as e:
+            if attempt == max_retries - 1:
+                print(f"  Yahoo Finance error ({symbol}): {e}")
+        time.sleep(1)
     return []
 
 
@@ -683,6 +692,7 @@ def update_frequencies(db_path: str = None):
         "bond_yield_3y": "monthly",
         "bond_yield_5y": "monthly",
         "bond_yield_10y": "monthly",
+        "SGD_MYR": "daily",
     }
 
     with get_conn(db_path) as conn:
