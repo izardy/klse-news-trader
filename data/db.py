@@ -104,6 +104,9 @@ CREATE TABLE IF NOT EXISTS annual_reports (
     local_path TEXT,
     file_size INTEGER,
     processed INTEGER DEFAULT 0,  -- 1 if PDF has been extracted & processed
+    status TEXT DEFAULT 'pending', -- 'pending' | 'processed' | 'failed'
+    fiscal_year TEXT,             -- extracted FY for pipeline tracking
+    s3_key TEXT,                  -- S3 key after sync
     downloaded_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(symbol, pdf_url),
@@ -416,10 +419,20 @@ def get_conn(db_path: str = None):
 
 
 def init_db(db_path: str = None):
-    """Initialize database with schema."""
+    """Initialize database with schema. Adds new columns to existing tables if needed."""
     with get_conn(db_path) as conn:
         conn.executescript(SCHEMA_SQL)
+        # Migrations: add new columns to existing annual_reports tables
+        existing_cols = [r[1] for r in conn.execute("PRAGMA table_info(annual_reports)").fetchall()]
+        if "status" not in existing_cols:
+            conn.execute("ALTER TABLE annual_reports ADD COLUMN status TEXT DEFAULT 'pending'")
+        if "fiscal_year" not in existing_cols:
+            conn.execute("ALTER TABLE annual_reports ADD COLUMN fiscal_year TEXT")
+        if "s3_key" not in existing_cols:
+            conn.execute("ALTER TABLE annual_reports ADD COLUMN s3_key TEXT")
     return True
+
+
 
 
 # ─── Stock CRUD ───────────────────────────────────────────────────────────────

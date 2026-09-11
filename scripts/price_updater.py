@@ -15,6 +15,7 @@ import os
 import sys
 import time
 import json
+import re
 import logging
 import requests
 from datetime import datetime, timedelta
@@ -290,6 +291,7 @@ def fetch_latest_news():
 
 def match_stock_symbol(text):
     """Match text to a stock symbol from the database."""
+    import re
     if not text:
         return None
 
@@ -301,7 +303,7 @@ def match_stock_symbol(text):
             "SELECT symbol, name FROM stocks WHERE is_active = 1"
         ).fetchall()
 
-    # Sort by name length (longest first) for more specific matches
+    # Build candidates: (symbol, name) sorted by name length (longest first)
     candidates = []
     for r in rows:
         symbol = r[0]
@@ -313,10 +315,12 @@ def match_stock_symbol(text):
     for symbol, name in candidates:
         if name and name.lower() in text_lower:
             return symbol
-        if symbol.lower() in text_lower:
+        # Match symbol as whole word to avoid false positives
+        if re.search(r'\b' + re.escape(symbol.lower()) + r'\b', text_lower):
             return symbol
 
     return None
+
 
 
 def check_macro_update():

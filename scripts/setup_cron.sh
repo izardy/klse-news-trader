@@ -31,7 +31,7 @@ LOG_ROTATE_SCHEDULE="5 16 * * *"                # 16:05 UTC = 00:05 MYT (next da
 PRICE_UPDATER_CMD="cd ${PROJECT_DIR} && ${PYTHON} scripts/price_updater.py >> ${LOG_DIR}/price_updater.log 2>&1"
 PDF_MONITOR_CMD="cd ${PROJECT_DIR} && ${PYTHON} scripts/daily_pdf_monitor.py >> ${LOG_DIR}/daily_pdf_monitor.log 2>&1"
 UNIVERSE_CMD="cd ${PROJECT_DIR} && ${PYTHON} scripts/fetch_klse_universe.py >> ${LOG_DIR}/klse_universe.log 2>&1"
-LOG_ROTATE_CMD="find ${LOG_DIR} -name '*.log' -size +10M -exec sh -c 'cat > \"$1\" <<< \"[rotated $(date)] \"' _ {} \\;"
+LOG_ROTATE_CMD="find ${LOG_DIR} -name '*.log' -size +10M -exec sh -c 'echo \"[rotated \$(date)] \" > \"\$1\"' _ {} \\;"
 
 # Combined cron content
 CRON_CONTENT="# KLSE News Trader — automated pipelines

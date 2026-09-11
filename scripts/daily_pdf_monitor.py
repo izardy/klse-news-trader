@@ -41,7 +41,8 @@ from data.db import (
 )
 
 # Config
-PDF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pdfs", "ALL")
+PDF_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pdfs", "NEW")
+PDF_ALL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "pdfs", "ALL")
 DISCLOSURE_URL = "https://disclosure.bursamalaysia.com"
 BURSA_ANNOUNCE_URL = "https://www.bursamalaysia.com/market_information/announcements/company_announcement"
 HEADLESS = False  # Must be False to bypass Turnstile
@@ -49,10 +50,15 @@ MAX_ANNOUNCEMENTS = 200  # Max announcements to process per run
 
 
 def get_existing_pdfs():
-    """Get set of filenames already downloaded."""
-    if not os.path.exists(PDF_DIR):
-        os.makedirs(PDF_DIR, exist_ok=True)
-    return set(os.listdir(PDF_DIR))
+    """Get set of filenames already downloaded (NEW + ALL)."""
+    dirs_to_check = [PDF_DIR, PDF_ALL_DIR]
+    existing = set()
+    for d in dirs_to_check:
+        if os.path.exists(d):
+            existing.update(os.listdir(d))
+        else:
+            os.makedirs(d, exist_ok=True)
+    return existing
 
 
 def get_existing_pdf_urls():
@@ -470,7 +476,7 @@ async def run_monitor():
         # Download PDFs
         downloaded, new_reports = await download_pdfs_for_announcements(context, announcements, existing_urls)
 
-        # Store in DB
+        # Store in DB with status='pending'
         for report in new_reports:
             try:
                 insert_annual_report(
@@ -482,6 +488,12 @@ async def run_monitor():
                     file_size=report["file_size"],
                     downloaded_at=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                 )
+                # Set status='pending' for pipeline processing
+                with get_conn() as conn:
+                    conn.execute(
+                        "UPDATE annual_reports SET status = 'pending' WHERE pdf_url = ?",
+                        (report["pdf_url"],)
+                    )
             except Exception as e:
                 logger.error(f"DB insert error: {e}")
 
